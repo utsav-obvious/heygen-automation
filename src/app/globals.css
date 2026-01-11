@@ -1,7 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-@import "@layer utilities {
+@layer utilities {
   .custom-scrollbar::-webkit-scrollbar {
     width: 4px;
   }
@@ -16,7 +16,6 @@
     background: #334155;
   }
 }
--css";
 
 @custom-variant dark (&:is(.dark *));
 

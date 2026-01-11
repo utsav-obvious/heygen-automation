@@ -11,6 +11,7 @@ import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check, Do
 import { Slider } from "@/components/ui/slider";
 import { useRef, useEffect } from "react";
 import { saveAuditSession, listAuditSessions, getAuditSession, deleteAuditSession, AuditSession } from "@/actions/storage-actions";
+import { runHeyGenAutomation } from "@/actions/video-actions";
 import {
   Sheet,
   SheetContent,
@@ -33,7 +34,10 @@ export default function AudioAuditDashboard() {
   const [playingAudio, setPlayingAudio] = useState<{ index: number; vIndex: number | "manual" | "context" } | null>(null);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
   const [finalScript, setFinalScript] = useState<string | null>(null);
+
   const [isPlayingFinal, setIsPlayingFinal] = useState(false);
+  const [isAutomating, setIsAutomating] = useState(false);
+
 
   // Storage State
   const [sessions, setSessions] = useState<{ id: string, name: string, timestamp: string }[]>([]);
@@ -203,6 +207,28 @@ export default function AudioAuditDashboard() {
       toast.error("Please generate the audio first.");
     }
   };
+
+  const handleRunAutomation = async () => {
+    if (!finalAudioRef.current || !finalAudioRef.current.src) {
+      toast.error("Please generate audio first.");
+      return;
+    }
+
+    setIsAutomating(true);
+    try {
+      const result = await runHeyGenAutomation(finalAudioRef.current.src);
+      if (result.success) {
+        toast.success(result.message);
+      } else {
+        toast.error(`Automation failed: ${result.message}`);
+      }
+    } catch (error) {
+      toast.error("Failed to run automation.");
+    } finally {
+      setIsAutomating(false);
+    }
+  };
+
 
   const copyToClipboard = () => {
     if (finalScript) {
@@ -751,6 +777,45 @@ export default function AudioAuditDashboard() {
                         </div>
                       </div>
                     </div>
+                  </div>
+                </Card>
+              )}
+
+              {/* Automation Section */}
+              {finalScript && (
+                <Card className="bg-slate-900 border-indigo-500/30 rounded-3xl overflow-hidden shadow-xl">
+                  <div className="bg-indigo-500/5 px-6 py-4 border-b border-indigo-500/10 mb-6">
+                    <div className="flex items-center gap-2">
+                      <FastForward className="w-4 h-4 text-indigo-400" />
+                      <span className="text-xs font-bold uppercase tracking-widest text-indigo-400">HeyGen Automation (Local CDP)</span>
+                    </div>
+                  </div>
+
+                  <div className="p-8 pt-0 space-y-4">
+                    <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-xl text-sm text-amber-200">
+                      <strong>Prerequisite:</strong> You must start Chrome with remote debugging enabled before running this.<br />
+                      Run this command in a terminal, then log in to HeyGen in the opened window:<br />
+                      <code className="bg-black/30 px-2 py-1 rounded block mt-2 text-xs font-mono select-all">
+                        /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+                      </code>
+                    </div>
+
+                    <Button
+                      onClick={handleRunAutomation}
+                      disabled={isAutomating}
+                      className="w-full h-14 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-lg shadow-lg shadow-indigo-500/20"
+                    >
+                      {isAutomating ? (
+                        <>
+                          <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                          Running Playwright Automation...
+                        </>
+                      ) : (
+                        <>
+                          Run HeyGen Automation
+                        </>
+                      )}
+                    </Button>
                   </div>
                 </Card>
               )}
