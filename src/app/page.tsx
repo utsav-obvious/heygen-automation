@@ -37,6 +37,7 @@ export default function AudioAuditDashboard() {
 
   const [isPlayingFinal, setIsPlayingFinal] = useState(false);
   const [isAutomating, setIsAutomating] = useState(false);
+  const [videoName, setVideoName] = useState("");
 
 
   // Storage State
@@ -214,9 +215,14 @@ export default function AudioAuditDashboard() {
       return;
     }
 
+    if (!videoName.trim()) {
+      toast.error("Please enter a Video ID.");
+      return;
+    }
+
     setIsAutomating(true);
     try {
-      const result = await runHeyGenAutomation(finalAudioRef.current.src);
+      const result = await runHeyGenAutomation(finalAudioRef.current.src, videoName.trim());
       if (result.success) {
         toast.success(result.message);
       } else {
@@ -800,10 +806,24 @@ export default function AudioAuditDashboard() {
                       </code>
                     </div>
 
+                    <div className="space-y-3">
+                      <label className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                        Video ID / Name
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Enter Video ID (e.g., MUSB-C7-12270-AT-6)"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                        value={videoName}
+                        onChange={(e) => setVideoName(e.target.value)}
+                      />
+                      <p className="text-xs text-slate-600">This name will be used for both the audio file and HeyGen video title.</p>
+                    </div>
+
                     <Button
                       onClick={handleRunAutomation}
-                      disabled={isAutomating}
-                      className="w-full h-14 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-lg shadow-lg shadow-indigo-500/20"
+                      disabled={isAutomating || !videoName.trim()}
+                      className="w-full h-14 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-lg shadow-lg shadow-indigo-500/20 disabled:opacity-50"
                     >
                       {isAutomating ? (
                         <>

@@ -3,7 +3,7 @@
 import { ElevenLabsClient } from "elevenlabs";
 
 const apiKey = process.env.ELEVEN_LABS_API_KEY;
-const voiceId = process.env.ELEVEN_LABS_VOICE_ID || "JBFqnCBsd6RMkjVDRZzb"; // Default voice if not set
+const voiceId = process.env.ELEVEN_LABS_VOICE_ID || "92EUmfraChZm9TXkDAyt";
 
 const elevenlabs = new ElevenLabsClient({
     apiKey: apiKey,

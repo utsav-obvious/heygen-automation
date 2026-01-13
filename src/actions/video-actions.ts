@@ -7,9 +7,14 @@ import util from "util";
 
 const execPromise = util.promisify(exec);
 
-export async function runHeyGenAutomation(audioData: string) {
+export async function runHeyGenAutomation(audioData: string, videoName: string) {
     try {
-        // 1. Save the audio data to a temp file
+        // Validate video name
+        if (!videoName || !videoName.trim()) {
+            throw new Error("Video name is required");
+        }
+
+        // 1. Save the audio data to a temp file with the custom name
         // audioData is "data:audio/mpeg;base64,..."
         const base64Data = audioData.split(';base64,').pop();
         if (!base64Data) throw new Error("Invalid audio data");
@@ -19,19 +24,21 @@ export async function runHeyGenAutomation(audioData: string) {
             fs.mkdirSync(tempDir);
         }
 
-        const audioPath = path.join(tempDir, `upload_audio_${Date.now()}.mp3`);
+        // Use the custom video name for the audio file
+        const sanitizedName = videoName.trim().replace(/[^a-zA-Z0-9-_]/g, '_');
+        const audioPath = path.join(tempDir, `${sanitizedName}.mp3`);
         fs.writeFileSync(audioPath, base64Data, { encoding: 'base64' });
 
-        console.log(`Saved temporary audio to: ${audioPath}`);
+        console.log(`Saved audio file as: ${audioPath}`);
 
         // 2. Run the Playwright script
-        // We pass the audio path as an environment variable
+        // We pass the audio path and video name as environment variables
         const command = `npm run generate:video`;
 
-        // Execute command with env var
+        // Execute command with env vars
         console.log("Starting Playwright automation...");
         const { stdout, stderr } = await execPromise(command, {
-            env: { ...process.env, AUDIO_PATH: audioPath }
+            env: { ...process.env, AUDIO_PATH: audioPath, VIDEO_NAME: videoName.trim() }
         });
 
         console.log("Playwright Output:", stdout);

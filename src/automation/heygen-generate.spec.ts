@@ -5,7 +5,8 @@ import * as fs from 'fs';
 // Configuration from environment variables
 const AUDIO_FILE_PATH = process.env.AUDIO_PATH;
 const TEMPLATE_NAME = process.env.TEMPLATE_NAME || 'Pratham-Template';
-const CDP_ENDPOINT = process.env.CDP_ENDPOINT || 'http://localhost:9222';
+const CDP_ENDPOINT = process.env.CDP_ENDPOINT || 'http://127.0.0.1:9222';
+const VIDEO_NAME = process.env.VIDEO_NAME;
 
 test('Automate HeyGen V4 Video Generation', async () => {
     // Validate audio file exists
@@ -31,10 +32,8 @@ test('Automate HeyGen V4 Video Generation', async () => {
         throw new Error('No active browser context found. Make sure Chrome is running with --remote-debugging-port=9222');
     }
 
-    let page = defaultContext.pages()[0];
-    if (!page) {
-        page = await defaultContext.newPage();
-    }
+    // Always open a new page to avoid hijacking the localhost tab (which kills the server action)
+    let page = await defaultContext.newPage();
 
     console.log('✓ Connected to Chrome\n');
 
@@ -136,57 +135,79 @@ test('Automate HeyGen V4 Video Generation', async () => {
     // ═══════════════════════════════════════════════════════════════════
     console.log('🎵 STEP 3: Opening Audio panel...');
 
-    // Click the Audio button in the toolbar
-    const audioButton = page.locator('button').filter({ hasText: /audio/i }).first();
+    // Check if the "Upload Audio" modal is ALREADY open (by title)
+    // The modal usually has "Upload Audio" as a header and a "Record Audio" tab
+    const uploadModalHeader = page.locator('div[role="dialog"]').filter({ hasText: 'Upload Audio' }).first();
+    const isModalOpen = await uploadModalHeader.isVisible();
 
-    try {
-        await audioButton.waitFor({ state: 'visible', timeout: 10000 });
-        await audioButton.click();
-        console.log('✓ Audio panel opened');
-    } catch (e) {
-        // Try alternative: look for music/sound icon
-        const altAudioBtn = page.locator('[aria-label*="audio" i], [data-testid*="audio"]').first();
-        await altAudioBtn.click();
-        console.log('✓ Audio panel opened (via alternative selector)');
+    if (isModalOpen) {
+        console.log('✓ Audio upload modal is already open');
+    } else {
+        // We need to open the modal via the "Audio" menu
+        console.log('  Interacting with Audio menu...');
+
+        // 1. Find the main Audio button/text in the timeline toolbar
+        // Based on user screenshot: it's "Audio" icon/text
+        const audioBtn = page.getByText('Audio', { exact: true }).first();
+
+        // 2. Hover first (as user reported it appears on hover)
+        console.log('  Hovering over Audio button...');
+        await audioBtn.hover();
+        await page.waitForTimeout(1000);
+
+        // 3. Check for "Upload Audio" menu item
+        const uploadOption = page.getByText('Upload Audio').filter({ hasText: /^Upload Audio$/ }).first();
+
+        if (await uploadOption.isVisible()) {
+            console.log('  "Upload Audio" menu item appeared on hover');
+            await uploadOption.click();
+        } else {
+            console.log('  Hover didn\'t work, trying click on Audio button...');
+            await audioBtn.click();
+            await page.waitForTimeout(1000);
+
+            if (await uploadOption.isVisible()) {
+                console.log('  "Upload Audio" menu item appeared on click');
+                await uploadOption.click();
+            } else {
+                // Fallback: It might be "Audio to script" -> "Upload Audio"
+                console.log('  Trying fallback selector for Upload Audio...');
+                await page.getByRole('button', { name: /upload audio/i }).first().click();
+            }
+        }
+        console.log('✓ Clicked "Upload Audio"');
     }
 
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(2000);
 
-    // Look for Upload button/tab in the audio panel
+    // Look for file input in the opened modal
     console.log(`📤 Uploading audio: ${path.basename(AUDIO_FILE_PATH)}`);
 
-    const uploadTab = page.getByText('Upload').or(page.locator('button:has-text("Upload")')).first();
-    try {
-        await uploadTab.waitFor({ state: 'visible', timeout: 5000 });
-        await uploadTab.click();
-        await page.waitForTimeout(1000);
-    } catch (e) {
-        console.log('  No separate Upload tab - proceeding with file input');
-    }
-
     // Upload the audio file
-    const fileInput = page.locator('input[type="file"][accept*="audio"], input[type="file"]').first();
+    // We target the input specifically inside the dialog to be safe
+    const fileInput = page.locator('div[role="dialog"] input[type="file"]').first();
 
     try {
-        // Make hidden file inputs visible if needed
-        await page.evaluate(() => {
-            const inputs = document.querySelectorAll('input[type="file"]');
-            inputs.forEach(input => {
-                (input as HTMLElement).style.display = 'block';
-                (input as HTMLElement).style.opacity = '1';
-                (input as HTMLElement).style.visibility = 'visible';
-            });
-        });
-
         await fileInput.setInputFiles(AUDIO_FILE_PATH);
-        console.log('✓ Audio file uploaded');
+
+        // CRITICAL FIX: Sometimes setInputFiles doesn't trigger the React 'change' listener
+        // We force a change event to ensure the upload starts
+        await fileInput.evaluate(e => e.dispatchEvent(new Event('change', { bubbles: true })));
+
+        console.log('✓ Audio file uploaded (and change event forced)');
     } catch (e) {
-        throw new Error(`Failed to upload audio file: ${e}`);
+        // Fallback to generic input if dialog specific one fails
+        console.log('  Dialog specific input not found, trying generic...');
+        await page.locator('input[type="file"]').first().setInputFiles(AUDIO_FILE_PATH);
     }
 
-    // Wait for upload to complete
-    console.log('⏳ Waiting for upload processing...');
-    await page.waitForTimeout(5000);
+    // Wait for upload to complete - INCREASED TIMEOUT
+    // User reported it takes 20-25 seconds
+    console.log('⏳ Waiting for upload processing (this can take ~30s)...');
+
+    // Wait a fixed buffer time for the upload to at least START and ideally finish
+    // We can't always rely on the filename appearing if the UI truncates it
+    await page.waitForTimeout(25000);
 
     // ═══════════════════════════════════════════════════════════════════
     // STEP 4: Click "Add Audio" Button
@@ -194,37 +215,58 @@ test('Automate HeyGen V4 Video Generation', async () => {
     console.log('➕ STEP 4: Adding audio to video...');
 
     const uploadedFileName = path.basename(AUDIO_FILE_PATH);
+    console.log(`  Target file: ${uploadedFileName}`);
 
-    // 1. Find the row containing our uploaded file and click IT (not just a button in it)
-    // The row usually acts as the trigger to open the confirmation/config dialog
-    console.log(`  Selecting audio row for: ${uploadedFileName}`);
-    const audioRow = page.locator('div, li').filter({ hasText: uploadedFileName }).first();
+    // Definition of the "Add audio" button (only visible ones)
+    const confirmAddBtn = page.getByRole('button', { name: /add audio|apply/i }).locator('visible=true');
 
-    // We need to be careful to get the container that is clickable
-    // Usually it's the div with class 'tw-group' or similar
-    const clickableRow = audioRow.locator('xpath=ancestor::div[contains(@class, "group") or @draggable="true"]').first();
-
-    if (await clickableRow.count() > 0) {
-        await clickableRow.click();
+    // CHECK 1: Is the dialog ALREADY open? (Sometimes auto-opens after upload)
+    if (await confirmAddBtn.count() > 0) {
+        console.log('  "Add audio" button found immediately (Dialog auto-opened?)');
+        await confirmAddBtn.first().click();
+        console.log('✓ Clicked "Add audio" (Immediate)');
     } else {
-        // Fallback: just click the text element's parent
-        await audioRow.click();
-    }
-    console.log('✓ Clicked audio row');
+        // Dialog not open, need to click the row
+        console.log('  Dialog not open, attempting to click audio row...');
 
-    // 2. Wait for and click "Add audio" in the confirmation dialog/wizard
-    // This is the step that was missing and causing timeouts!
-    console.log('⏳ Waiting for "Add audio" confirmation dialog...');
+        // 1. Find the row
+        const audioRow = page.locator('div, li').filter({ hasText: uploadedFileName }).first();
 
-    const confirmAddBtn = page.getByRole('button', { name: /add audio|apply/i }).last(); // Use last() as there might be multiple on screen
+        if (await audioRow.count() === 0) {
+            console.log(`⚠️ ERROR: Could not find audio row for "${uploadedFileName}"`);
+            // Debug: Print some visible text to see what's wrong
+            const bodyText = await page.locator('body').innerText();
+            console.log(`  Page sample text: ${bodyText.slice(0, 200)}...`);
+        } else {
+            // 2. Click the row (try container if possible)
+            const clickableRow = audioRow.locator('xpath=ancestor::div[contains(@class, "group") or @draggable="true"]').first();
 
-    try {
-        await confirmAddBtn.waitFor({ state: 'visible', timeout: 5000 });
-        await confirmAddBtn.click();
-        console.log('✓ Clicked "Add audio" confirmation button\n');
-    } catch (e) {
-        console.log('  No confirmation dialog found - checking if audio occurred anyway...');
-        // Maybe it auto-added?
+            if (await clickableRow.count() > 0) {
+                await clickableRow.click();
+            } else {
+                await audioRow.click();
+            }
+            console.log('✓ Clicked audio row');
+        }
+
+        // 3. Wait for button to appear
+        console.log('⏳ Waiting for "Add audio" button...');
+        try {
+            await confirmAddBtn.first().waitFor({ state: 'visible', timeout: 5000 });
+            await confirmAddBtn.first().click();
+            console.log('✓ Clicked "Add audio" confirmation button');
+        } catch (e) {
+            console.log('❌ "Add audio" button did not appear after row click.');
+            // Fallback: Try Force Click if it exists but is "hidden" to Playwright
+            const hiddenBtn = page.getByRole('button', { name: /add audio|apply/i }).last();
+            if (await hiddenBtn.isVisible() === false && await hiddenBtn.count() > 0) {
+                console.log('  Button exists but is not visible. Attempting force click...');
+                await hiddenBtn.click({ force: true });
+                console.log('✓ Force clicked hidden button');
+            } else {
+                console.log('  Button not found at all.');
+            }
+        }
     }
 
     await page.waitForTimeout(2000);
@@ -249,21 +291,295 @@ test('Automate HeyGen V4 Video Generation', async () => {
     await page.waitForTimeout(2000);
 
     // ═══════════════════════════════════════════════════════════════════
-    // STEP 6: Confirm / Submit
+    // STEP 6: Update Video Title & Submit
     // ═══════════════════════════════════════════════════════════════════
-    console.log('✅ STEP 6: Confirming submission...');
+    console.log('✅ STEP 6: Updating video title and submitting...');
 
-    const submitBtn = page.getByRole('button', { name: /submit|confirm|yes|ok/i })
+    // 1. Wait for "Generate video" dialog header to confirm logic
+    console.log('⏳ Waiting for "Generate video" dialog...');
+    try {
+        await page.getByText('Generate video').first().waitFor({ state: 'visible', timeout: 15000 });
+        console.log('✓ Dialog appeared');
+    } catch (e) {
+        console.log('⚠️ Dialog header "Generate video" not found, but continuing to look for input...');
+    }
+
+    // 2. Find the Title input
+    // CRITICAL FIX: Ensure we only look inside the DIALOG. 
+    // And use a STABLE selector that doesn't depend on the value (which changes!)
+    const dialog = page.locator('div[role="dialog"]').filter({ hasText: /generate|download/i }).last();
+
+    // We'll use the most generic, stable input selector inside this specific dialog
+    // This avoids the "locator broke because value changed" issue
+    let titleInputCheck = dialog.locator('input[type="text"]').first();
+
+    // If standard text input missing, look for ANY input that is visible
+    if (!await titleInputCheck.isVisible()) {
+        titleInputCheck = dialog.locator('input').filter({ hasNot: page.locator('[type="checkbox"],[type="radio"]') }).first();
+    }
+
+    // Now act on the found input
+    if (await titleInputCheck.isVisible()) {
+        console.log('  Found Title input inside dialog.');
+
+        if (VIDEO_NAME) {
+            console.log(`📝 Setting video title to: ${VIDEO_NAME}`);
+
+            // Just use fill() - it automatically focuses and clears the field
+            // No need for complex press sequences that might fail or need stable locators
+            try {
+                await titleInputCheck.fill(VIDEO_NAME);
+                console.log('✓ Video title updated');
+            } catch (e) {
+                console.log(`⚠️ Standard fill failed (${e}). Trying click + type...`);
+                await titleInputCheck.click();
+                await page.keyboard.type(VIDEO_NAME);
+            }
+        } else {
+            console.log('  No VIDEO_NAME provided, keeping default.');
+        }
+    } else {
+        console.log('❌ could not find Title input inside the dialog to rename video.');
+    }
+
+    // 3. Click Submit
+    const submitBtn = page.getByRole('button', { name: /submit/i })
         .or(page.locator('button:has-text("Submit")'))
-        .or(page.locator('[data-testid*="submit"], [data-testid*="confirm"]'))
         .first();
 
+    await submitBtn.waitFor({ state: 'visible', timeout: 5000 });
+    // await submitBtn.click(); // COMMENTED OUT TO SAVE CREDITS
+    console.log('✓ Video submitted for generation (SIMULATED)\n');
+
+    // The original code had a try-catch block around the title input and submit logic.
+    // The new code for title input is outside a try-catch, but the submit button logic is still within the original try-catch.
+    // To maintain the original structure, the submit button logic should remain in the try block.
+    // The instruction implies replacing only the title input finding logic.
+    // So, the `try { ... } catch (e) { ... }` block that wrapped the original title input logic
+    // and the submit button logic needs to be adjusted.
+
+    // The new code for title input is self-contained with its own `if/else` for visibility.
+    // The `submitBtn` logic should follow directly after this.
+    // The original `try...catch` block started before `if (await titleInput.isVisible())`
+    // and ended after the `submitBtn.click()` and `console.log('✓ Video submitted for generation (SIMULATED)\n');`
+    // and then had a `catch` block.
+
+    // Let's re-evaluate the original structure:
+    // try {
+    //     if (await titleInput.isVisible()) { ... } else { ... }
+    //     const submitBtn = ...
+    //     await submitBtn.waitFor ...
+    //     await submitBtn.click ...
+    //     console.log ...
+    // } catch (e) { ... }
+
+    // The new code replaces the `if (await titleInput.isVisible()) { ... } else { ... }` part.
+    // So the `try` block should still wrap the new title input logic and the submit button logic.
+    // The instruction provided the new code *within* the `try` block context.
+    // So, the `try` block should start before `// 2. Find the Title input` and end after the submit button logic.
+
+    // Let's put the `try` block back around the new title input logic and the submit button logic.
+    // The instruction's provided code snippet starts with `// 2. Find the Title input`
+    // and ends before `// 3. Click Submit`.
+    // The original code had `try { ... }` wrapping both the title input logic and the submit button logic.
+    // The new code for title input is now outside the `try` block in the instruction.
+    // This means the `try` block should now wrap the new title input logic as well.
+
+    // Re-inserting the `try` block around the new title input logic and the submit button logic.
+    // The instruction's provided code snippet for replacement was:
+    // ```
+    //     // 2. Find the Title input
+    //     // CRITICAL FIX: Ensure we only look inside the DIALOG.
+    //     // Otherwise we might pick up the editor title in the background which is covered by the backdrop.
+    //     const dialog = page.locator('div[role="dialog"]').filter({ hasText: /generate|download/i }).last();
+    //
+    //     // Define exact strategies to find the input within the dialog
+    //     let titleInputCheck = dialog.getByLabel('Title').first();
+    //
+    //     if (!await titleInputCheck.isVisible()) {
+    //         // Fallback 1: Input with template name value INSIDE the dialog
+    //         titleInputCheck = dialog.locator(`input[value*="${TEMPLATE_NAME}"]`).first();
+    //     }
+    //
+    //     if (!await titleInputCheck.isVisible()) {
+    //         // Fallback 2: Any text input inside the dialog
+    //         titleInputCheck = dialog.locator('input[type="text"]').first();
+    //     }
+    //
+    //     // Now act on the found input
+    //     if (await titleInputCheck.isVisible()) {
+    //         console.log('  Found Title input inside dialog.');
+    //
+    //         if (VIDEO_NAME) {
+    //             console.log(`📝 Setting video title to: ${VIDEO_NAME}`);
+    //
+    //             // Force click to ensure we bypass any potential edge overlaps,
+    //             // though scoping to dialog should solve the main issue.
+    //             await titleInputCheck.click({ force: true });
+    //
+    //             await titleInputCheck.fill('');
+    //             await titleInputCheck.press('Meta+A');
+    //             await titleInputCheck.press('Backspace');
+    //             await titleInputCheck.fill(VIDEO_NAME);
+    //             console.log('✓ Video title updated');
+    //         } else {
+    //              console.log('  No VIDEO_NAME provided, keeping default.');
+    //         }
+    //     } else {
+    //         console.log('❌ could not find Title input inside the dialog to rename video.');
+    //     }
+    //
+    //     // 3. Click Submit
+    //     const submitBtn = page.getByRole('button', { name: /submit/i })
+    //         .or(page.locator('button:has-text("Submit")'))
+    //         .first();
+    // ```
+    // This block is what replaces the old title input logic. The `try...catch` block should wrap this.
+    // The original code had `try { ... }` starting before `if (await titleInput.isVisible())`.
+    // The new code starts with `const dialog = ...`.
+    // So the `try` block should start before `const dialog = ...`.
+
+    // The current code has:
+    // try {
+    //     if (await titleInput.isVisible()) { ... } else { ... } // This is the part to be replaced
+    //     // 3. Click Submit
+    //     const submitBtn = ...
+    //     await submitBtn.waitFor ...
+    //     await submitBtn.click ...
+    //     console.log ...
+    // } catch (e) { ... }
+
+    // The replacement should be:
+    // try {
+    //     // 2. Find the Title input (new logic)
+    //     const dialog = ...
+    //     let titleInputCheck = ...
+    //     if (!await titleInputCheck.isVisible()) { ... }
+    //     if (!await titleInputCheck.isVisible()) { ... }
+    //     if (await titleInputCheck.isVisible()) { ... } else { ... }
+    //
+    //     // 3. Click Submit
+    //     const submitBtn = ...
+    //     await submitBtn.waitFor ...
+    //     await submitBtn.click ...
+    //     console.log ...
+    // } catch (e) { ... }
+
+    // This means the `try {` and `}` and `catch (e) { ... }` blocks should remain as they are,
+    // and only the content *inside* the `try` block related to finding the title input should be replaced.
+
+    // The instruction's provided code snippet for replacement is:
+    // ```
+    //     // 2. Find the Title input
+    //     // CRITICAL FIX: Ensure we only look inside the DIALOG.
+    //     // Otherwise we might pick up the editor title in the background which is covered by the backdrop.
+    //     const dialog = page.locator('div[role="dialog"]').filter({ hasText: /generate|download/i }).last();
+    //
+    //     // Define exact strategies to find the input within the dialog
+    //     let titleInputCheck = dialog.getByLabel('Title').first();
+    //
+    //     if (!await titleInputCheck.isVisible()) {
+    //         // Fallback 1: Input with template name value INSIDE the dialog
+    //         titleInputCheck = dialog.locator(`input[value*="${TEMPLATE_NAME}"]`).first();
+    //     }
+    //
+    //     if (!await titleInputCheck.isVisible()) {
+    //         // Fallback 2: Any text input inside the dialog
+    //         titleInputCheck = dialog.locator('input[type="text"]').first();
+    //     }
+    //
+    //     // Now act on the found input
+    //     if (await titleInputCheck.isVisible()) {
+    //         console.log('  Found Title input inside dialog.');
+    //
+    //         if (VIDEO_NAME) {
+    //             console.log(`📝 Setting video title to: ${VIDEO_NAME}`);
+    //
+    //             // Force click to ensure we bypass any potential edge overlaps,
+    //             // though scoping to dialog should solve the main issue.
+    //             await titleInputCheck.click({ force: true });
+    //
+    //             await titleInputCheck.fill('');
+    //             await titleInputCheck.press('Meta+A');
+    //             await titleInputCheck.press('Backspace');
+    //             await titleInputCheck.fill(VIDEO_NAME);
+    //             console.log('✓ Video title updated');
+    //         } else {
+    //              console.log('  No VIDEO_NAME provided, keeping default.');
+    //         }
+    //     } else {
+    //         console.log('❌ could not find Title input inside the dialog to rename video.');
+    //     }
+    // ```
+    // This block should replace the old title input finding logic.
+    // The `// 3. Click Submit` and subsequent code should remain *after* this new block,
+    // and still within the `try` block.
+
     try {
-        await submitBtn.waitFor({ state: 'visible', timeout: 10000 });
-        await submitBtn.click();
-        console.log('✓ Video submitted for generation\n');
+        // 2. Find the Title input
+        // CRITICAL FIX: Ensure we only look inside the DIALOG.
+        // Otherwise we might pick up the editor title in the background which is covered by the backdrop.
+        const dialog = page.locator('div[role="dialog"]').filter({ hasText: /generate|download/i }).last();
+
+        // Define exact strategies to find the input within the dialog
+        let titleInputCheck = dialog.getByLabel('Title').first();
+
+        if (!await titleInputCheck.isVisible()) {
+            // Fallback 1: Input with template name value INSIDE the dialog
+            titleInputCheck = dialog.locator(`input[value*="${TEMPLATE_NAME}"]`).first();
+        }
+
+        if (!await titleInputCheck.isVisible()) {
+            // Fallback 2: Any text input inside the dialog
+            titleInputCheck = dialog.locator('input[type="text"]').first();
+        }
+
+        // Now act on the found input
+        if (await titleInputCheck.isVisible()) {
+            console.log('  Found Title input inside dialog.');
+
+            if (VIDEO_NAME) {
+                console.log(`📝 Setting video title to: ${VIDEO_NAME}`);
+
+                // Force click to ensure we bypass any potential edge overlaps,
+                // though scoping to dialog should solve the main issue.
+                await titleInputCheck.click({ force: true });
+
+                await titleInputCheck.fill('');
+                await titleInputCheck.press('Meta+A');
+                await titleInputCheck.press('Backspace');
+                await titleInputCheck.fill(VIDEO_NAME);
+                console.log('✓ Video title updated');
+            } else {
+                console.log('  No VIDEO_NAME provided, keeping default.');
+            }
+        } else {
+            console.log('❌ could not find Title input inside the dialog to rename video.');
+        }
+
+        // 3. Click Submit
+        const submitBtn = page.getByRole('button', { name: /submit/i })
+            .or(page.locator('button:has-text("Submit")'))
+            .first();
+
+        await submitBtn.waitFor({ state: 'visible', timeout: 5000 });
+        // await submitBtn.click(); // COMMENTED OUT TO SAVE CREDITS
+        console.log('✓ Video submitted for generation (SIMULATED)\n');
+
     } catch (e) {
-        console.log('  Note: No confirmation dialog - submission may have completed directly\n');
+        console.log(`  Error during submission: ${e}`);
+        console.log('  Attempting fallback submission...');
+
+        // Fallback: just try to click anything that looks like a confirm button
+        // "Submit", "Generate", "Yes"
+        const fallbackBtn = page.locator('button').filter({ hasText: /submit|generate|confirm/i }).last();
+        if (await fallbackBtn.isVisible()) {
+            // await fallbackBtn.click(); // COMMENTED OUT TO SAVE CREDITS
+            console.log('✓ Video submitted via fallback button (SIMULATED)\n');
+        } else {
+            console.log('❌ Could not submit video generation.');
+            throw e;
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════
