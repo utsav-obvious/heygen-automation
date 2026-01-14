@@ -36,6 +36,10 @@ This project automates video creation on HeyGen by:
     ```
     *Log in to HeyGen manually in this browser window before running scripts.*
 
+    open -na "Google Chrome" --args \
+  --remote-debugging-port=9222 \
+  --user-data-dir="/tmp/chrome-automation-profile"
+
 ## 🚀 Usage
 
 ### Batch Processing (Recommended)

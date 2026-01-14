@@ -52,7 +52,7 @@ let failCount = 0;
 
 for (const [index, file] of files.entries()) {
     const fullPath = path.resolve(audioDir, file);
-    const videoName = path.parse(file).name;
+    const videoName = path.parse(file).name + "-auto";
 
     console.log(`[${index + 1}/${files.length}] Processing: ${file}`);
     console.log(`   -> Video Title: "${videoName}"`);

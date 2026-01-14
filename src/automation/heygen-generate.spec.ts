@@ -4,6 +4,7 @@ import * as fs from 'fs';
 
 // Configuration from environment variables
 const AUDIO_FILE_PATH = process.env.AUDIO_PATH;
+// const AUDIO_FILE_PATH = "/Users/utsavchindalia/Documents/Obvious/Pratham/Heygen_automation/audio_test/audited-script-1767756364837.mp3";
 const TEMPLATE_NAME = process.env.TEMPLATE_NAME || 'Pratham-Template';
 const CDP_ENDPOINT = process.env.CDP_ENDPOINT || 'http://127.0.0.1:9222';
 const VIDEO_NAME = process.env.VIDEO_NAME;
@@ -207,7 +208,7 @@ test('Automate HeyGen V4 Video Generation', async () => {
 
     // Wait a fixed buffer time for the upload to at least START and ideally finish
     // We can't always rely on the filename appearing if the UI truncates it
-    await page.waitForTimeout(25000);
+    await page.waitForTimeout(50000);
 
     // ═══════════════════════════════════════════════════════════════════
     // STEP 4: Click "Add Audio" Button
@@ -348,7 +349,7 @@ test('Automate HeyGen V4 Video Generation', async () => {
         .first();
 
     await submitBtn.waitFor({ state: 'visible', timeout: 5000 });
-    // await submitBtn.click(); // COMMENTED OUT TO SAVE CREDITS
+    await submitBtn.click(); // COMMENTED OUT TO SAVE CREDITS
     console.log('✓ Video submitted for generation (SIMULATED)\n');
 
     // The original code had a try-catch block around the title input and submit logic.
@@ -563,7 +564,7 @@ test('Automate HeyGen V4 Video Generation', async () => {
             .first();
 
         await submitBtn.waitFor({ state: 'visible', timeout: 5000 });
-        // await submitBtn.click(); // COMMENTED OUT TO SAVE CREDITS
+        await submitBtn.click(); // COMMENTED OUT TO SAVE CREDITS
         console.log('✓ Video submitted for generation (SIMULATED)\n');
 
     } catch (e) {
@@ -574,7 +575,7 @@ test('Automate HeyGen V4 Video Generation', async () => {
         // "Submit", "Generate", "Yes"
         const fallbackBtn = page.locator('button').filter({ hasText: /submit|generate|confirm/i }).last();
         if (await fallbackBtn.isVisible()) {
-            // await fallbackBtn.click(); // COMMENTED OUT TO SAVE CREDITS
+            await fallbackBtn.click(); // COMMENTED OUT TO SAVE CREDITS
             console.log('✓ Video submitted via fallback button (SIMULATED)\n');
         } else {
             console.log('❌ Could not submit video generation.');

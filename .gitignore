@@ -44,3 +44,6 @@ next-env.d.ts
 # automation artifacts
 temp/
 test-results/
+
+*.mp4
+*.mp3
