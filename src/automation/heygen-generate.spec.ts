@@ -33,6 +33,16 @@ test('Automate HeyGen V4 Video Generation', async () => {
         throw new Error('No active browser context found. Make sure Chrome is running with --remote-debugging-port=9222');
     }
 
+    // Close existing pages to save memory
+    const existingPages = defaultContext.pages();
+    for (const p of existingPages) {
+        try {
+            await p.close();
+        } catch (e) {
+            // Ignore errors for already closed pages
+        }
+    }
+
     // Always open a new page to avoid hijacking the localhost tab (which kills the server action)
     let page = await defaultContext.newPage();
 
@@ -193,7 +203,7 @@ test('Automate HeyGen V4 Video Generation', async () => {
 
         // CRITICAL FIX: Sometimes setInputFiles doesn't trigger the React 'change' listener
         // We force a change event to ensure the upload starts
-        await fileInput.evaluate(e => e.dispatchEvent(new Event('change', { bubbles: true })));
+        // await fileInput.evaluate(e => e.dispatchEvent(new Event('change', { bubbles: true })));
 
         console.log('✓ Audio file uploaded (and change event forced)');
     } catch (e) {
@@ -208,7 +218,7 @@ test('Automate HeyGen V4 Video Generation', async () => {
 
     // Wait a fixed buffer time for the upload to at least START and ideally finish
     // We can't always rely on the filename appearing if the UI truncates it
-    await page.waitForTimeout(50000);
+    await page.waitForTimeout(35000);
 
     // ═══════════════════════════════════════════════════════════════════
     // STEP 4: Click "Add Audio" Button
@@ -296,243 +306,21 @@ test('Automate HeyGen V4 Video Generation', async () => {
     // ═══════════════════════════════════════════════════════════════════
     console.log('✅ STEP 6: Updating video title and submitting...');
 
-    // 1. Wait for "Generate video" dialog header to confirm logic
-    console.log('⏳ Waiting for "Generate video" dialog...');
     try {
-        await page.getByText('Generate video').first().waitFor({ state: 'visible', timeout: 15000 });
-        console.log('✓ Dialog appeared');
-    } catch (e) {
-        console.log('⚠️ Dialog header "Generate video" not found, but continuing to look for input...');
-    }
 
-    // 2. Find the Title input
-    // CRITICAL FIX: Ensure we only look inside the DIALOG. 
-    // And use a STABLE selector that doesn't depend on the value (which changes!)
-    const dialog = page.locator('div[role="dialog"]').filter({ hasText: /generate|download/i }).last();
-
-    // We'll use the most generic, stable input selector inside this specific dialog
-    // This avoids the "locator broke because value changed" issue
-    let titleInputCheck = dialog.locator('input[type="text"]').first();
-
-    // If standard text input missing, look for ANY input that is visible
-    if (!await titleInputCheck.isVisible()) {
-        titleInputCheck = dialog.locator('input').filter({ hasNot: page.locator('[type="checkbox"],[type="radio"]') }).first();
-    }
-
-    // Now act on the found input
-    if (await titleInputCheck.isVisible()) {
-        console.log('  Found Title input inside dialog.');
-
-        if (VIDEO_NAME) {
-            console.log(`📝 Setting video title to: ${VIDEO_NAME}`);
-
-            // Just use fill() - it automatically focuses and clears the field
-            // No need for complex press sequences that might fail or need stable locators
-            try {
-                await titleInputCheck.fill(VIDEO_NAME);
-                console.log('✓ Video title updated');
-            } catch (e) {
-                console.log(`⚠️ Standard fill failed (${e}). Trying click + type...`);
-                await titleInputCheck.click();
-                await page.keyboard.type(VIDEO_NAME);
-            }
-        } else {
-            console.log('  No VIDEO_NAME provided, keeping default.');
-        }
-    } else {
-        console.log('❌ could not find Title input inside the dialog to rename video.');
-    }
-
-    // 3. Click Submit
-    const submitBtn = page.getByRole('button', { name: /submit/i })
-        .or(page.locator('button:has-text("Submit")'))
-        .first();
-
-    await submitBtn.waitFor({ state: 'visible', timeout: 5000 });
-    await submitBtn.click(); // COMMENTED OUT TO SAVE CREDITS
-    console.log('✓ Video submitted for generation (SIMULATED)\n');
-
-    // The original code had a try-catch block around the title input and submit logic.
-    // The new code for title input is outside a try-catch, but the submit button logic is still within the original try-catch.
-    // To maintain the original structure, the submit button logic should remain in the try block.
-    // The instruction implies replacing only the title input finding logic.
-    // So, the `try { ... } catch (e) { ... }` block that wrapped the original title input logic
-    // and the submit button logic needs to be adjusted.
-
-    // The new code for title input is self-contained with its own `if/else` for visibility.
-    // The `submitBtn` logic should follow directly after this.
-    // The original `try...catch` block started before `if (await titleInput.isVisible())`
-    // and ended after the `submitBtn.click()` and `console.log('✓ Video submitted for generation (SIMULATED)\n');`
-    // and then had a `catch` block.
-
-    // Let's re-evaluate the original structure:
-    // try {
-    //     if (await titleInput.isVisible()) { ... } else { ... }
-    //     const submitBtn = ...
-    //     await submitBtn.waitFor ...
-    //     await submitBtn.click ...
-    //     console.log ...
-    // } catch (e) { ... }
-
-    // The new code replaces the `if (await titleInput.isVisible()) { ... } else { ... }` part.
-    // So the `try` block should still wrap the new title input logic and the submit button logic.
-    // The instruction provided the new code *within* the `try` block context.
-    // So, the `try` block should start before `// 2. Find the Title input` and end after the submit button logic.
-
-    // Let's put the `try` block back around the new title input logic and the submit button logic.
-    // The instruction's provided code snippet starts with `// 2. Find the Title input`
-    // and ends before `// 3. Click Submit`.
-    // The original code had `try { ... }` wrapping both the title input logic and the submit button logic.
-    // The new code for title input is now outside the `try` block in the instruction.
-    // This means the `try` block should now wrap the new title input logic as well.
-
-    // Re-inserting the `try` block around the new title input logic and the submit button logic.
-    // The instruction's provided code snippet for replacement was:
-    // ```
-    //     // 2. Find the Title input
-    //     // CRITICAL FIX: Ensure we only look inside the DIALOG.
-    //     // Otherwise we might pick up the editor title in the background which is covered by the backdrop.
-    //     const dialog = page.locator('div[role="dialog"]').filter({ hasText: /generate|download/i }).last();
-    //
-    //     // Define exact strategies to find the input within the dialog
-    //     let titleInputCheck = dialog.getByLabel('Title').first();
-    //
-    //     if (!await titleInputCheck.isVisible()) {
-    //         // Fallback 1: Input with template name value INSIDE the dialog
-    //         titleInputCheck = dialog.locator(`input[value*="${TEMPLATE_NAME}"]`).first();
-    //     }
-    //
-    //     if (!await titleInputCheck.isVisible()) {
-    //         // Fallback 2: Any text input inside the dialog
-    //         titleInputCheck = dialog.locator('input[type="text"]').first();
-    //     }
-    //
-    //     // Now act on the found input
-    //     if (await titleInputCheck.isVisible()) {
-    //         console.log('  Found Title input inside dialog.');
-    //
-    //         if (VIDEO_NAME) {
-    //             console.log(`📝 Setting video title to: ${VIDEO_NAME}`);
-    //
-    //             // Force click to ensure we bypass any potential edge overlaps,
-    //             // though scoping to dialog should solve the main issue.
-    //             await titleInputCheck.click({ force: true });
-    //
-    //             await titleInputCheck.fill('');
-    //             await titleInputCheck.press('Meta+A');
-    //             await titleInputCheck.press('Backspace');
-    //             await titleInputCheck.fill(VIDEO_NAME);
-    //             console.log('✓ Video title updated');
-    //         } else {
-    //              console.log('  No VIDEO_NAME provided, keeping default.');
-    //         }
-    //     } else {
-    //         console.log('❌ could not find Title input inside the dialog to rename video.');
-    //     }
-    //
-    //     // 3. Click Submit
-    //     const submitBtn = page.getByRole('button', { name: /submit/i })
-    //         .or(page.locator('button:has-text("Submit")'))
-    //         .first();
-    // ```
-    // This block is what replaces the old title input logic. The `try...catch` block should wrap this.
-    // The original code had `try { ... }` starting before `if (await titleInput.isVisible())`.
-    // The new code starts with `const dialog = ...`.
-    // So the `try` block should start before `const dialog = ...`.
-
-    // The current code has:
-    // try {
-    //     if (await titleInput.isVisible()) { ... } else { ... } // This is the part to be replaced
-    //     // 3. Click Submit
-    //     const submitBtn = ...
-    //     await submitBtn.waitFor ...
-    //     await submitBtn.click ...
-    //     console.log ...
-    // } catch (e) { ... }
-
-    // The replacement should be:
-    // try {
-    //     // 2. Find the Title input (new logic)
-    //     const dialog = ...
-    //     let titleInputCheck = ...
-    //     if (!await titleInputCheck.isVisible()) { ... }
-    //     if (!await titleInputCheck.isVisible()) { ... }
-    //     if (await titleInputCheck.isVisible()) { ... } else { ... }
-    //
-    //     // 3. Click Submit
-    //     const submitBtn = ...
-    //     await submitBtn.waitFor ...
-    //     await submitBtn.click ...
-    //     console.log ...
-    // } catch (e) { ... }
-
-    // This means the `try {` and `}` and `catch (e) { ... }` blocks should remain as they are,
-    // and only the content *inside* the `try` block related to finding the title input should be replaced.
-
-    // The instruction's provided code snippet for replacement is:
-    // ```
-    //     // 2. Find the Title input
-    //     // CRITICAL FIX: Ensure we only look inside the DIALOG.
-    //     // Otherwise we might pick up the editor title in the background which is covered by the backdrop.
-    //     const dialog = page.locator('div[role="dialog"]').filter({ hasText: /generate|download/i }).last();
-    //
-    //     // Define exact strategies to find the input within the dialog
-    //     let titleInputCheck = dialog.getByLabel('Title').first();
-    //
-    //     if (!await titleInputCheck.isVisible()) {
-    //         // Fallback 1: Input with template name value INSIDE the dialog
-    //         titleInputCheck = dialog.locator(`input[value*="${TEMPLATE_NAME}"]`).first();
-    //     }
-    //
-    //     if (!await titleInputCheck.isVisible()) {
-    //         // Fallback 2: Any text input inside the dialog
-    //         titleInputCheck = dialog.locator('input[type="text"]').first();
-    //     }
-    //
-    //     // Now act on the found input
-    //     if (await titleInputCheck.isVisible()) {
-    //         console.log('  Found Title input inside dialog.');
-    //
-    //         if (VIDEO_NAME) {
-    //             console.log(`📝 Setting video title to: ${VIDEO_NAME}`);
-    //
-    //             // Force click to ensure we bypass any potential edge overlaps,
-    //             // though scoping to dialog should solve the main issue.
-    //             await titleInputCheck.click({ force: true });
-    //
-    //             await titleInputCheck.fill('');
-    //             await titleInputCheck.press('Meta+A');
-    //             await titleInputCheck.press('Backspace');
-    //             await titleInputCheck.fill(VIDEO_NAME);
-    //             console.log('✓ Video title updated');
-    //         } else {
-    //              console.log('  No VIDEO_NAME provided, keeping default.');
-    //         }
-    //     } else {
-    //         console.log('❌ could not find Title input inside the dialog to rename video.');
-    //     }
-    // ```
-    // This block should replace the old title input finding logic.
-    // The `// 3. Click Submit` and subsequent code should remain *after* this new block,
-    // and still within the `try` block.
-
-    try {
+        // 1. Wait for "Generate video" dialog header to confirm logic
         // 2. Find the Title input
         // CRITICAL FIX: Ensure we only look inside the DIALOG.
         // Otherwise we might pick up the editor title in the background which is covered by the backdrop.
         const dialog = page.locator('div[role="dialog"]').filter({ hasText: /generate|download/i }).last();
 
-        // Define exact strategies to find the input within the dialog
-        let titleInputCheck = dialog.getByLabel('Title').first();
+        // We'll use the most generic, stable input selector inside this specific dialog
+        // This avoids the "locator broke because value changed" issue
+        let titleInputCheck = dialog.locator('input[type="text"]').first();
 
+        // If standard text input missing, look for ANY input that is visible
         if (!await titleInputCheck.isVisible()) {
-            // Fallback 1: Input with template name value INSIDE the dialog
-            titleInputCheck = dialog.locator(`input[value*="${TEMPLATE_NAME}"]`).first();
-        }
-
-        if (!await titleInputCheck.isVisible()) {
-            // Fallback 2: Any text input inside the dialog
-            titleInputCheck = dialog.locator('input[type="text"]').first();
+            titleInputCheck = dialog.locator('input').filter({ hasNot: page.locator('[type="checkbox"],[type="radio"]') }).first();
         }
 
         // Now act on the found input
@@ -542,15 +330,16 @@ test('Automate HeyGen V4 Video Generation', async () => {
             if (VIDEO_NAME) {
                 console.log(`📝 Setting video title to: ${VIDEO_NAME}`);
 
-                // Force click to ensure we bypass any potential edge overlaps,
-                // though scoping to dialog should solve the main issue.
-                await titleInputCheck.click({ force: true });
-
-                await titleInputCheck.fill('');
-                await titleInputCheck.press('Meta+A');
-                await titleInputCheck.press('Backspace');
-                await titleInputCheck.fill(VIDEO_NAME);
-                console.log('✓ Video title updated');
+                // Just use fill() - it automatically focuses and clears the field
+                // No need for complex press sequences that might fail or need stable locators
+                try {
+                    await titleInputCheck.fill(VIDEO_NAME);
+                    console.log('✓ Video title updated');
+                } catch (e) {
+                    console.log(`⚠️ Standard fill failed (${e}). Trying click + type...`);
+                    await titleInputCheck.click();
+                    await page.keyboard.type(VIDEO_NAME);
+                }
             } else {
                 console.log('  No VIDEO_NAME provided, keeping default.');
             }
