@@ -9,7 +9,7 @@ const TEMPLATE_NAME = process.env.TEMPLATE_NAME || 'Pratham-Template';
 const CDP_ENDPOINT = process.env.CDP_ENDPOINT || 'http://127.0.0.1:9222';
 const VIDEO_NAME = process.env.VIDEO_NAME;
 
-test('Automate HeyGen V4 Video Generation', async () => {
+test(`Automate HeyGen V4 Video Generation - ${VIDEO_NAME || (AUDIO_FILE_PATH ? path.basename(AUDIO_FILE_PATH) : 'Unknown')}`, async () => {
     // Validate audio file exists
     if (!AUDIO_FILE_PATH || !fs.existsSync(AUDIO_FILE_PATH)) {
         throw new Error(`Audio file not found at: ${AUDIO_FILE_PATH}`);
@@ -33,13 +33,18 @@ test('Automate HeyGen V4 Video Generation', async () => {
         throw new Error('No active browser context found. Make sure Chrome is running with --remote-debugging-port=9222');
     }
 
-    // Close existing pages to save memory
+    // Close ONLY the previous HeyGen tab to save memory while preserving other tabs
     const existingPages = defaultContext.pages();
-    for (const p of existingPages) {
-        try {
-            await p.close();
-        } catch (e) {
-            // Ignore errors for already closed pages
+    for (let i = existingPages.length - 1; i >= 0; i--) {
+        const p = existingPages[i];
+        if (p.url().includes('heygen.com')) {
+            try {
+                await p.close();
+                console.log('✓ Closed previous HeyGen tab');
+            } catch (e) {
+                // Ignore errors for already closed pages
+            }
+            break; // Only close the most recent one
         }
     }
 
@@ -52,7 +57,8 @@ test('Automate HeyGen V4 Video Generation', async () => {
     // STEP 1: Navigate to Templates Page
     // ═══════════════════════════════════════════════════════════════════
     console.log('📍 STEP 1: Navigating to HeyGen Templates...');
-    await page.goto('https://app.heygen.com/templates', { waitUntil: 'domcontentloaded' });
+    // await page.goto('https://app.heygen.com/templates', { waitUntil: 'domcontentloaded' });
+    await page.goto('https://app.heygen.com/avatar/templates?ct=private', { waitUntil: 'domcontentloaded' });
 
     // Wait for the template to be visible (more reliable than networkidle)
     await page.waitForSelector(`text="${TEMPLATE_NAME}"`, { timeout: 30000 });
@@ -146,6 +152,79 @@ test('Automate HeyGen V4 Video Generation', async () => {
     // ═══════════════════════════════════════════════════════════════════
     console.log('🎵 STEP 3: Opening Audio panel...');
 
+    // EXTRA STEP: Wait for the script editor area to fully load and hydrate
+    console.log('  Waiting for script text or "Add scene" button to be visible...');
+    await page.waitForTimeout(2000);
+
+    // NEW LOGIC: Clear existing "utsav" text OR click "Add scene" as per latest UI change
+    // Using getByText with regex is more resilient than looking only for 'span' with exact match.
+    const utsavElement = page.getByText(/utsav/i).first();
+    const addSceneBtn = page.locator('button').filter({ hasText: 'Add scene' }).first();
+
+    // Extra step: Try waiting up to 5 seconds specifically for the text to appear
+    try {
+        await utsavElement.waitFor({ state: 'visible', timeout: 5000 });
+    } catch (e) {
+        console.log('  "utsav" text not found within timeout, will check for "Add scene"...');
+    }
+
+    if (await utsavElement.isVisible()) {
+        // Triple click to ensure focus and sub-selection
+        await utsavElement.click({ clickCount: 3 });
+        await page.waitForTimeout(500);
+
+        const isMac = process.platform === 'darwin';
+        const modifier = isMac ? 'Meta' : 'Control';
+
+        // Perform aggressive clearing sequence
+        await page.keyboard.press(`${modifier}+a`);
+        await page.waitForTimeout(200);
+        await page.keyboard.press('Backspace');
+        await page.waitForTimeout(200);
+        await page.keyboard.press('Delete'); // Fallback for some editors
+
+        console.log('  Script clear sequence performed.');
+        await page.waitForTimeout(1000);
+
+        // After clearing, "Upload audio" button should be visible
+        // Using a regex to be more flexible with casing/spacing
+        const uploadAudioBtn = page.getByRole('button', { name: /upload audio/i }).first();
+        if (await uploadAudioBtn.isVisible()) {
+            console.log('  Clicking "Upload audio" button...');
+            await uploadAudioBtn.click();
+            await page.waitForTimeout(1000);
+        } else {
+            // Check if it's just text that needs clicking
+            const uploadAudioTextFallback = page.locator('button, div, span').filter({ hasText: /^Upload audio$/i }).first();
+            if (await uploadAudioTextFallback.isVisible()) {
+                console.log('  Clicking "Upload audio" (text-based fallback)...');
+                await uploadAudioTextFallback.click();
+                await page.waitForTimeout(1000);
+            }
+        }
+    } else if (await addSceneBtn.isVisible()) {
+        console.log('  "utsav" not found, but "Add scene" visible. Clicking it...');
+        await addSceneBtn.click();
+        await page.waitForTimeout(1000);
+
+        const uploadAudioBtn = page.locator('button').filter({ hasText: 'Upload audio' }).first();
+        if (await uploadAudioBtn.isVisible()) {
+            console.log('  Clicking "Upload audio" button...');
+            await uploadAudioBtn.click();
+            await page.waitForTimeout(1000);
+        }
+    } else {
+        console.log('  Neither "utsav" script nor "Add scene" found. Trying global search for Upload Audio options...');
+        const uploadOptionFallback = page.getByRole('button', { name: /upload audio/i }).first();
+        if (await uploadOptionFallback.isVisible()) {
+            console.log('  Clicking "Upload audio" (fallback trigger)...');
+            await uploadOptionFallback.click();
+            await page.waitForTimeout(1000);
+        } else {
+            throw new Error('STEP 3 FAILED: Could not find any way to open audio upload (no "utsav" text, no "Add scene" button, no "Upload audio" button).');
+        }
+    }
+
     // Check if the "Upload Audio" modal is ALREADY open (by title)
     // The modal usually has "Upload Audio" as a header and a "Record Audio" tab
     const uploadModalHeader = page.locator('div[role="dialog"]').filter({ hasText: 'Upload Audio' }).first();
@@ -209,7 +288,11 @@ test('Automate HeyGen V4 Video Generation', async () => {
     } catch (e) {
         // Fallback to generic input if dialog specific one fails
         console.log('  Dialog specific input not found, trying generic...');
-        await page.locator('input[type="file"]').first().setInputFiles(AUDIO_FILE_PATH);
+        try {
+            await page.locator('input[type="file"]').first().setInputFiles(AUDIO_FILE_PATH);
+        } catch (e2) {
+            throw new Error(`STEP 3 FAILED: Could not upload audio file. Dialog input error: ${e}. Generic input error: ${e2}`);
+        }
     }
 
     // Wait for upload to complete - INCREASED TIMEOUT
@@ -244,10 +327,10 @@ test('Automate HeyGen V4 Video Generation', async () => {
         const audioRow = page.locator('div, li').filter({ hasText: uploadedFileName }).first();
 
         if (await audioRow.count() === 0) {
-            console.log(`⚠️ ERROR: Could not find audio row for "${uploadedFileName}"`);
             // Debug: Print some visible text to see what's wrong
             const bodyText = await page.locator('body').innerText();
             console.log(`  Page sample text: ${bodyText.slice(0, 200)}...`);
+            throw new Error(`STEP 4 FAILED: Could not find audio row for "${uploadedFileName}".`);
         } else {
             // 2. Click the row (try container if possible)
             const clickableRow = audioRow.locator('xpath=ancestor::div[contains(@class, "group") or @draggable="true"]').first();
@@ -275,7 +358,7 @@ test('Automate HeyGen V4 Video Generation', async () => {
                 await hiddenBtn.click({ force: true });
                 console.log('✓ Force clicked hidden button');
             } else {
-                console.log('  Button not found at all.');
+                throw new Error('STEP 4 FAILED: "Add audio" button not found at all after clicking audio row.');
             }
         }
     }
@@ -344,7 +427,7 @@ test('Automate HeyGen V4 Video Generation', async () => {
                 console.log('  No VIDEO_NAME provided, keeping default.');
             }
         } else {
-            console.log('❌ could not find Title input inside the dialog to rename video.');
+            throw new Error('STEP 6 FAILED: Could not find Title input inside the dialog to rename video.');
         }
 
         // 3. Click Submit

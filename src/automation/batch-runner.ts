@@ -49,6 +49,7 @@ console.log('══════════════════════�
 // 3. Process Each File
 let successCount = 0;
 let failCount = 0;
+const failedVideos: string[] = [];
 
 for (const [index, file] of files.entries()) {
     const fullPath = path.resolve(audioDir, file);
@@ -79,6 +80,7 @@ for (const [index, file] of files.entries()) {
         console.error(`❌ Failed to process: ${file}`);
         console.error('   Continuing to next file...\n');
         failCount++;
+        failedVideos.push(videoName);
     }
 
     // Optional: Add a small delay between runs to let system settle?
@@ -96,6 +98,18 @@ console.log('🏁 Batch Processing Complete');
 console.log('════════════════════════════════════════════════════════════');
 console.log(`✅ Successful: ${successCount}`);
 console.log(`❌ Failed:     ${failCount}`);
+
+if (failedVideos.length > 0) {
+    console.log('════════════════════════════════════════════════════════════');
+    console.log('❌ Failed Videos:');
+    failedVideos.forEach(v => console.log(`   - ${v}`));
+
+    // Also save the list to a file for easy access
+    const logFile = path.resolve(process.cwd(), 'failed_videos.log');
+    fs.writeFileSync(logFile, failedVideos.join('\n') + '\n', 'utf8');
+    console.log(`\n📋 Saved failed video list to: ${logFile}`);
+}
+
 console.log('════════════════════════════════════════════════════════════');
 
 if (failCount > 0) {
