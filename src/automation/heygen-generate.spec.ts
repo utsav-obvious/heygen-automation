@@ -5,7 +5,7 @@ import * as fs from 'fs';
 // Configuration from environment variables
 const AUDIO_FILE_PATH = process.env.AUDIO_PATH;
 // const AUDIO_FILE_PATH = "/Users/utsavchindalia/Documents/Obvious/Pratham/Heygen_automation/audio_test/audited-script-1767756364837.mp3";
-const TEMPLATE_NAME = process.env.TEMPLATE_NAME || 'Pratham-Template';
+const TEMPLATE_URL = process.env.TEMPLATE_URL || 'https://app.heygen.com/create-v4/draft?template_id=c142c9f82bff4643b9d2d7841d68e237&private=1&panel=scene';
 const CDP_ENDPOINT = process.env.CDP_ENDPOINT || 'http://127.0.0.1:9222';
 const VIDEO_NAME = process.env.VIDEO_NAME;
 
@@ -19,7 +19,7 @@ test(`Automate HeyGen V4 Video Generation - ${VIDEO_NAME || (AUDIO_FILE_PATH ? p
     console.log('🎬 HeyGen V4 Video Generation - CDP Automation');
     console.log('════════════════════════════════════════════════════════════');
     console.log(`📁 Audio file: ${AUDIO_FILE_PATH}`);
-    console.log(`📋 Template: ${TEMPLATE_NAME}`);
+    console.log(`📋 Template URL: ${TEMPLATE_URL}`);
     console.log('');
 
     // ═══════════════════════════════════════════════════════════════════
@@ -54,97 +54,14 @@ test(`Automate HeyGen V4 Video Generation - ${VIDEO_NAME || (AUDIO_FILE_PATH ? p
     console.log('✓ Connected to Chrome\n');
 
     // ═══════════════════════════════════════════════════════════════════
-    // STEP 1: Navigate to Templates Page
+    // STEP 1 & 2: Navigate directly to Template Editor
     // ═══════════════════════════════════════════════════════════════════
-    console.log('📍 STEP 1: Navigating to HeyGen Templates...');
-    // await page.goto('https://app.heygen.com/templates', { waitUntil: 'domcontentloaded' });
-    await page.goto('https://app.heygen.com/avatar/templates?ct=private', { waitUntil: 'domcontentloaded' });
+    console.log('📍 STEP 1 & 2: Navigating directly to HeyGen Template Editor...');
+    await page.goto(TEMPLATE_URL, { waitUntil: 'domcontentloaded' });
 
-    // Wait for the template to be visible (more reliable than networkidle)
-    await page.waitForSelector(`text="${TEMPLATE_NAME}"`, { timeout: 30000 });
-    await page.waitForTimeout(1000); // Brief settle time
-    console.log('✓ Templates page loaded\n');
-
-    // ═══════════════════════════════════════════════════════════════════
-    // STEP 2: Hover on Template & Click "Use this template"
-    // ═══════════════════════════════════════════════════════════════════
-    console.log(`🖱️ STEP 2: Selecting template "${TEMPLATE_NAME}"...`);
-
-    // Find the template card specifically
-    // The card usually has a 'tw-group' class or similar container behavior
-    // We'll find the text element, then find its specific card container
-    const templateCard = page.locator('div.tw-group, div[class*="group"]').filter({ hasText: TEMPLATE_NAME }).first();
-
-    try {
-        await templateCard.waitFor({ state: 'visible', timeout: 10000 });
-        console.log(`✓ Found template card for "${TEMPLATE_NAME}"`);
-
-        // Hover to reveal buttons
-        await templateCard.hover();
-        await page.waitForTimeout(1000); // Wait for hover animation
-
-        // Find the "Use this template" / "Play" button WITHIN the card
-        // It's usually a button with an icon named 'create-video' or 'new-video'
-        const useTemplateBtn = templateCard.locator('button:has(iconpark-icon[name="create-video"]), button:has(iconpark-icon[name="new-video"])').first();
-
-        if (await useTemplateBtn.isVisible()) {
-            await useTemplateBtn.click();
-            console.log('✓ Clicked "Use this template" button (play icon)\n');
-        } else {
-            // Fallback: Click the card itself or any button in it
-            console.log('  Button not visible, clicking card center...');
-            await templateCard.click();
-            console.log('✓ Clicked template card\n');
-        }
-    } catch (e) {
-        console.log(`  Error identifying template card: ${e}`);
-        console.log('  Fallback: Trying global text search...');
-
-        // Original fallback logic but slightly improved
-        const templateNameElement = page.locator(`text="${TEMPLATE_NAME}"`).first();
-        const templateCardArea = templateNameElement.locator('xpath=ancestor::div[.//button]').first();
-        await templateCardArea.hover();
-        await page.waitForTimeout(1000);
-        await templateCardArea.locator('button').first().click();
-        console.log('✓ Clicked template via fallback\n');
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // Wait for Editor to Load - May open in a new tab
-    // ═══════════════════════════════════════════════════════════════════
     console.log('⏳ Waiting for editor to load...');
-
-    // The editor might open in a new tab - wait for it
-    const pagesBefore = defaultContext.pages().length;
-
-    // Wait for potential new page or URL change
-    const editorPage = await Promise.race([
-        // Option 1: URL changes in current page
-        page.waitForURL(/create-v4|editor|video/, { timeout: 10000 }).then(() => page),
-        // Option 2: New page opens
-        defaultContext.waitForEvent('page', { timeout: 10000 })
-    ]).catch(() => null);
-
-    if (editorPage && editorPage !== page) {
-        // A new tab opened - switch to it
-        page = editorPage;
-        console.log('✓ Switched to new editor tab');
-        await page.waitForLoadState('domcontentloaded');
-    } else if (!editorPage) {
-        // Neither happened - check if there are new pages
-        const allPages = defaultContext.pages();
-        if (allPages.length > pagesBefore) {
-            page = allPages[allPages.length - 1];
-            console.log('✓ Found new editor tab');
-            await page.waitForLoadState('domcontentloaded');
-        } else {
-            // Maybe still on same page - wait a bit more
-            await page.waitForTimeout(2000);
-            console.log('  Continuing on current page...');
-        }
-    }
-
-    await page.waitForTimeout(3000); // Let editor fully render
+    await page.waitForURL(/create-v4|editor|video/, { timeout: 15000 }).catch(() => null);
+    await page.waitForTimeout(5000); // Let editor fully render
     console.log('✓ Editor loaded\n');
 
     // ═══════════════════════════════════════════════════════════════════
