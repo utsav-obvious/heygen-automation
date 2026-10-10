@@ -1,4 +1,4 @@
-import { test, chromium } from '@playwright/test';
+import { test, chromium, type Page } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -50,6 +50,23 @@ test(`Automate HeyGen V4 Video Generation - ${VIDEO_NAME || (AUDIO_FILE_PATH ? p
 
     // Always open a new page to avoid hijacking the localhost tab (which kills the server action)
     let page = await defaultContext.newPage();
+
+    // Safety net for the name-card (GSAP) stretch bug: force playback "freeze" on GSAP
+    // elements in the submit request. The primary fix is the editor reload in STEP 4.5.
+    await page.route('**/v1/text_draft.generate', async (route) => {
+        try {
+            const body = route.request().postDataJSON();
+            const patched = forceGsapFreeze(body);
+            if (patched > 0) {
+                console.log(`🛡️ Submit guard: set playback "freeze" on ${patched} GSAP element(s)`);
+                await route.continue({ postData: JSON.stringify(body) });
+                return;
+            }
+        } catch (e) {
+            console.log(`⚠️ Submit guard could not inspect request: ${e}`);
+        }
+        await route.continue();
+    });
 
     console.log('✓ Connected to Chrome\n');
 
@@ -280,7 +297,31 @@ test(`Automate HeyGen V4 Video Generation - ${VIDEO_NAME || (AUDIO_FILE_PATH ? p
         }
     }
 
-    await page.waitForTimeout(2000);
+    // ═══════════════════════════════════════════════════════════════════
+    // STEP 4.5: Reload editor so the name card isn't stretched
+    // ═══════════════════════════════════════════════════════════════════
+    // When the template loads, its scene is only 0.4s ("utsav"), so HeyGen's editor marks the
+    // 4.4s name-card animation as "fit_to_scene" in its in-memory state. Autosaves send a
+    // corrected copy ("freeze"), but Generate submits the stale in-memory state, so the card
+    // gets stretched across the whole video. Reloading after the audio is saved makes HeyGen
+    // recompute it against the real scene length, which yields "freeze".
+    console.log('🔄 STEP 4.5: Waiting for draft save, then reloading editor...');
+    await page.waitForResponse(
+        (r) => r.url().includes('/v1/text_draft.save') && r.request().method() === 'POST',
+        { timeout: 20000 }
+    ).catch(() => console.log('  ⚠️ No draft save observed within 20s, continuing'));
+    await page.waitForTimeout(6000); // Second autosave (with transcript words) lands a few seconds later
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: /generate/i }).first().waitFor({ state: 'visible', timeout: 30000 });
+    await page.waitForTimeout(5000); // Let editor fully render
+
+    const playbackModes = await getGsapPlaybackModes(page);
+    console.log(`  Name card playback after reload: ${playbackModes ? playbackModes.join(', ') : 'unknown'}`);
+    if (playbackModes?.includes('fit_to_scene')) {
+        throw new Error('STEP 4.5 FAILED: Name card is still "fit_to_scene" after reload. Not submitting, to avoid a stretched video.');
+    }
+    console.log('✓ Editor reloaded\n');
 
     // ═══════════════════════════════════════════════════════════════════
     // STEP 5: Click "Generate" Button
@@ -382,3 +423,39 @@ test(`Automate HeyGen V4 Video Generation - ${VIDEO_NAME || (AUDIO_FILE_PATH ? p
 
     // Keep browser open for user to see result
 });
+
+// Sets content.playback = "freeze" on every GSAP element found anywhere in the payload.
+// Returns how many elements were changed.
+function forceGsapFreeze(node: unknown): number {
+    if (!node || typeof node !== 'object') return 0;
+    let changed = 0;
+    const obj = node as Record<string, any>;
+    if (obj.type === 'gsap' && obj.content && typeof obj.content === 'object' && obj.content.playback !== 'freeze') {
+        obj.content.playback = 'freeze';
+        changed++;
+    }
+    for (const value of Object.values(obj)) changed += forceGsapFreeze(value);
+    return changed;
+}
+
+// Reads the playback mode of GSAP elements from the HeyGen editor's in-memory (Redux) draft.
+// Returns null if the store can't be found (e.g. HeyGen changed its internals).
+async function getGsapPlaybackModes(page: Page): Promise<string[] | null> {
+    return page.evaluate(() => {
+        for (const el of Array.from(document.querySelectorAll('body *'))) {
+            const fiberKey = Object.keys(el).find((k) => k.startsWith('__reactFiber$'));
+            if (!fiberKey) continue;
+            for (let f = (el as any)[fiberKey], i = 0; f && i < 200; i++, f = f.return) {
+                const store = f.memoizedProps?.store;
+                if (store?.getState) {
+                    const elements = store.getState().draftCanvasV4?.present?.draft?.text_draft?.visual?.elements;
+                    if (!elements) return null;
+                    return Object.values(elements as Record<string, any>)
+                        .filter((e) => e?.type === 'gsap')
+                        .map((e) => String(e.content?.playback));
+                }
+            }
+        }
+        return null;
+    });
+}

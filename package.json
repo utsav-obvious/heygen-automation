@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "generate:video": "playwright test src/automation/heygen-generate.spec.ts --project=chromium",
-    "automate:batch": "npx tsx src/automation/batch-runner.ts"
+    "automate:batch": "npx tsx src/automation/batch-runner.ts",
+    "check:ui": "playwright test src/automation/ui-health-check.spec.ts --project=chromium"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
