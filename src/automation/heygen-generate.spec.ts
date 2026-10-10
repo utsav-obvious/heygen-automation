@@ -1,11 +1,11 @@
-import { test, chromium } from '@playwright/test';
+import { test, chromium, type Page } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
 
 // Configuration from environment variables
 const AUDIO_FILE_PATH = process.env.AUDIO_PATH;
 // const AUDIO_FILE_PATH = "/Users/utsavchindalia/Documents/Obvious/Pratham/Heygen_automation/audio_test/audited-script-1767756364837.mp3";
-const TEMPLATE_NAME = process.env.TEMPLATE_NAME || 'Pratham-Template';
+const TEMPLATE_URL = process.env.TEMPLATE_URL || 'https://app.heygen.com/create-v4/draft?template_id=c142c9f82bff4643b9d2d7841d68e237&private=1&panel=scene';
 const CDP_ENDPOINT = process.env.CDP_ENDPOINT || 'http://127.0.0.1:9222';
 const VIDEO_NAME = process.env.VIDEO_NAME;
 
@@ -19,7 +19,7 @@ test(`Automate HeyGen V4 Video Generation - ${VIDEO_NAME || (AUDIO_FILE_PATH ? p
     console.log('🎬 HeyGen V4 Video Generation - CDP Automation');
     console.log('════════════════════════════════════════════════════════════');
     console.log(`📁 Audio file: ${AUDIO_FILE_PATH}`);
-    console.log(`📋 Template: ${TEMPLATE_NAME}`);
+    console.log(`📋 Template URL: ${TEMPLATE_URL}`);
     console.log('');
 
     // ═══════════════════════════════════════════════════════════════════
@@ -51,100 +51,34 @@ test(`Automate HeyGen V4 Video Generation - ${VIDEO_NAME || (AUDIO_FILE_PATH ? p
     // Always open a new page to avoid hijacking the localhost tab (which kills the server action)
     let page = await defaultContext.newPage();
 
+    // Safety net for the name-card (GSAP) stretch bug: force playback "freeze" on GSAP
+    // elements in the submit request. The primary fix is the editor reload in STEP 4.5.
+    await page.route('**/v1/text_draft.generate', async (route) => {
+        try {
+            const body = route.request().postDataJSON();
+            const patched = forceGsapFreeze(body);
+            if (patched > 0) {
+                console.log(`🛡️ Submit guard: set playback "freeze" on ${patched} GSAP element(s)`);
+                await route.continue({ postData: JSON.stringify(body) });
+                return;
+            }
+        } catch (e) {
+            console.log(`⚠️ Submit guard could not inspect request: ${e}`);
+        }
+        await route.continue();
+    });
+
     console.log('✓ Connected to Chrome\n');
 
     // ═══════════════════════════════════════════════════════════════════
-    // STEP 1: Navigate to Templates Page
+    // STEP 1 & 2: Navigate directly to Template Editor
     // ═══════════════════════════════════════════════════════════════════
-    console.log('📍 STEP 1: Navigating to HeyGen Templates...');
-    // await page.goto('https://app.heygen.com/templates', { waitUntil: 'domcontentloaded' });
-    await page.goto('https://app.heygen.com/avatar/templates?ct=private', { waitUntil: 'domcontentloaded' });
+    console.log('📍 STEP 1 & 2: Navigating directly to HeyGen Template Editor...');
+    await page.goto(TEMPLATE_URL, { waitUntil: 'domcontentloaded' });
 
-    // Wait for the template to be visible (more reliable than networkidle)
-    await page.waitForSelector(`text="${TEMPLATE_NAME}"`, { timeout: 30000 });
-    await page.waitForTimeout(1000); // Brief settle time
-    console.log('✓ Templates page loaded\n');
-
-    // ═══════════════════════════════════════════════════════════════════
-    // STEP 2: Hover on Template & Click "Use this template"
-    // ═══════════════════════════════════════════════════════════════════
-    console.log(`🖱️ STEP 2: Selecting template "${TEMPLATE_NAME}"...`);
-
-    // Find the template card specifically
-    // The card usually has a 'tw-group' class or similar container behavior
-    // We'll find the text element, then find its specific card container
-    const templateCard = page.locator('div.tw-group, div[class*="group"]').filter({ hasText: TEMPLATE_NAME }).first();
-
-    try {
-        await templateCard.waitFor({ state: 'visible', timeout: 10000 });
-        console.log(`✓ Found template card for "${TEMPLATE_NAME}"`);
-
-        // Hover to reveal buttons
-        await templateCard.hover();
-        await page.waitForTimeout(1000); // Wait for hover animation
-
-        // Find the "Use this template" / "Play" button WITHIN the card
-        // It's usually a button with an icon named 'create-video' or 'new-video'
-        const useTemplateBtn = templateCard.locator('button:has(iconpark-icon[name="create-video"]), button:has(iconpark-icon[name="new-video"])').first();
-
-        if (await useTemplateBtn.isVisible()) {
-            await useTemplateBtn.click();
-            console.log('✓ Clicked "Use this template" button (play icon)\n');
-        } else {
-            // Fallback: Click the card itself or any button in it
-            console.log('  Button not visible, clicking card center...');
-            await templateCard.click();
-            console.log('✓ Clicked template card\n');
-        }
-    } catch (e) {
-        console.log(`  Error identifying template card: ${e}`);
-        console.log('  Fallback: Trying global text search...');
-
-        // Original fallback logic but slightly improved
-        const templateNameElement = page.locator(`text="${TEMPLATE_NAME}"`).first();
-        const templateCardArea = templateNameElement.locator('xpath=ancestor::div[.//button]').first();
-        await templateCardArea.hover();
-        await page.waitForTimeout(1000);
-        await templateCardArea.locator('button').first().click();
-        console.log('✓ Clicked template via fallback\n');
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // Wait for Editor to Load - May open in a new tab
-    // ═══════════════════════════════════════════════════════════════════
     console.log('⏳ Waiting for editor to load...');
-
-    // The editor might open in a new tab - wait for it
-    const pagesBefore = defaultContext.pages().length;
-
-    // Wait for potential new page or URL change
-    const editorPage = await Promise.race([
-        // Option 1: URL changes in current page
-        page.waitForURL(/create-v4|editor|video/, { timeout: 10000 }).then(() => page),
-        // Option 2: New page opens
-        defaultContext.waitForEvent('page', { timeout: 10000 })
-    ]).catch(() => null);
-
-    if (editorPage && editorPage !== page) {
-        // A new tab opened - switch to it
-        page = editorPage;
-        console.log('✓ Switched to new editor tab');
-        await page.waitForLoadState('domcontentloaded');
-    } else if (!editorPage) {
-        // Neither happened - check if there are new pages
-        const allPages = defaultContext.pages();
-        if (allPages.length > pagesBefore) {
-            page = allPages[allPages.length - 1];
-            console.log('✓ Found new editor tab');
-            await page.waitForLoadState('domcontentloaded');
-        } else {
-            // Maybe still on same page - wait a bit more
-            await page.waitForTimeout(2000);
-            console.log('  Continuing on current page...');
-        }
-    }
-
-    await page.waitForTimeout(3000); // Let editor fully render
+    await page.waitForURL(/create-v4|editor|video/, { timeout: 15000 }).catch(() => null);
+    await page.waitForTimeout(5000); // Let editor fully render
     console.log('✓ Editor loaded\n');
 
     // ═══════════════════════════════════════════════════════════════════
@@ -363,7 +297,31 @@ test(`Automate HeyGen V4 Video Generation - ${VIDEO_NAME || (AUDIO_FILE_PATH ? p
         }
     }
 
-    await page.waitForTimeout(2000);
+    // ═══════════════════════════════════════════════════════════════════
+    // STEP 4.5: Reload editor so the name card isn't stretched
+    // ═══════════════════════════════════════════════════════════════════
+    // When the template loads, its scene is only 0.4s ("utsav"), so HeyGen's editor marks the
+    // 4.4s name-card animation as "fit_to_scene" in its in-memory state. Autosaves send a
+    // corrected copy ("freeze"), but Generate submits the stale in-memory state, so the card
+    // gets stretched across the whole video. Reloading after the audio is saved makes HeyGen
+    // recompute it against the real scene length, which yields "freeze".
+    console.log('🔄 STEP 4.5: Waiting for draft save, then reloading editor...');
+    await page.waitForResponse(
+        (r) => r.url().includes('/v1/text_draft.save') && r.request().method() === 'POST',
+        { timeout: 20000 }
+    ).catch(() => console.log('  ⚠️ No draft save observed within 20s, continuing'));
+    await page.waitForTimeout(6000); // Second autosave (with transcript words) lands a few seconds later
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: /generate/i }).first().waitFor({ state: 'visible', timeout: 30000 });
+    await page.waitForTimeout(5000); // Let editor fully render
+
+    const playbackModes = await getGsapPlaybackModes(page);
+    console.log(`  Name card playback after reload: ${playbackModes ? playbackModes.join(', ') : 'unknown'}`);
+    if (playbackModes?.includes('fit_to_scene')) {
+        throw new Error('STEP 4.5 FAILED: Name card is still "fit_to_scene" after reload. Not submitting, to avoid a stretched video.');
+    }
+    console.log('✓ Editor reloaded\n');
 
     // ═══════════════════════════════════════════════════════════════════
     // STEP 5: Click "Generate" Button
@@ -465,3 +423,39 @@ test(`Automate HeyGen V4 Video Generation - ${VIDEO_NAME || (AUDIO_FILE_PATH ? p
 
     // Keep browser open for user to see result
 });
+
+// Sets content.playback = "freeze" on every GSAP element found anywhere in the payload.
+// Returns how many elements were changed.
+function forceGsapFreeze(node: unknown): number {
+    if (!node || typeof node !== 'object') return 0;
+    let changed = 0;
+    const obj = node as Record<string, any>;
+    if (obj.type === 'gsap' && obj.content && typeof obj.content === 'object' && obj.content.playback !== 'freeze') {
+        obj.content.playback = 'freeze';
+        changed++;
+    }
+    for (const value of Object.values(obj)) changed += forceGsapFreeze(value);
+    return changed;
+}
+
+// Reads the playback mode of GSAP elements from the HeyGen editor's in-memory (Redux) draft.
+// Returns null if the store can't be found (e.g. HeyGen changed its internals).
+async function getGsapPlaybackModes(page: Page): Promise<string[] | null> {
+    return page.evaluate(() => {
+        for (const el of Array.from(document.querySelectorAll('body *'))) {
+            const fiberKey = Object.keys(el).find((k) => k.startsWith('__reactFiber$'));
+            if (!fiberKey) continue;
+            for (let f = (el as any)[fiberKey], i = 0; f && i < 200; i++, f = f.return) {
+                const store = f.memoizedProps?.store;
+                if (store?.getState) {
+                    const elements = store.getState().draftCanvasV4?.present?.draft?.text_draft?.visual?.elements;
+                    if (!elements) return null;
+                    return Object.values(elements as Record<string, any>)
+                        .filter((e) => e?.type === 'gsap')
+                        .map((e) => String(e.content?.playback));
+                }
+            }
+        }
+        return null;
+    });
+}
